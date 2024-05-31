@@ -237,21 +237,20 @@ public abstract class BukkitData implements Data {
 
         @NotNull
         public static BukkitData.PotionEffects adapt(@NotNull Collection<Effect> effects) {
-            return from(
-                    effects.stream()
-                            .map(effect -> new PotionEffect(
-                                    Objects.requireNonNull(
-                                            PotionEffectType.getByName(effect.type()),
-                                            "Invalid potion effect type"
-                                    ),
-                                    effect.duration(),
-                                    effect.amplifier(),
-                                    effect.isAmbient(),
-                                    effect.showParticles(),
-                                    effect.hasIcon()
-                            ))
-                            .toList()
-            );
+            return from(effects.stream()
+                    .map(effect -> {
+                        final PotionEffectType type = matchEffectType(effect.type());
+                        return type != null ? new PotionEffect(
+                                type,
+                                effect.duration(),
+                                effect.amplifier(),
+                                effect.isAmbient(),
+                                effect.showParticles(),
+                                effect.hasIcon()
+                        ) : null;
+                    })
+                    .filter(Objects::nonNull)
+                    .toList());
         }
 
         @NotNull
@@ -616,7 +615,7 @@ public abstract class BukkitData implements Data {
             if (instance == null) {
                 return;
             }
-            instance.setBaseValue(attribute == null ? instance.getDefaultValue() : instance.getBaseValue());
+            instance.setBaseValue(attribute == null ? instance.getDefaultValue() : attribute.baseValue());
             instance.getModifiers().forEach(instance::removeModifier);
             if (attribute != null) {
                 attribute.modifiers().forEach(modifier -> instance.addModifier(new AttributeModifier(
