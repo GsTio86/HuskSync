@@ -26,6 +26,7 @@ import de.tr7zw.changeme.nbtapi.NBTCompound;
 import de.tr7zw.changeme.nbtapi.NBTPersistentDataContainer;
 import lombok.*;
 import net.william278.desertwell.util.ThrowingConsumer;
+import net.william278.desertwell.util.Version;
 import net.william278.husksync.BukkitHuskSync;
 import net.william278.husksync.HuskSync;
 import net.william278.husksync.adapter.Adaptable;
@@ -69,7 +70,6 @@ public abstract class BukkitData implements Data {
         private final @Nullable ItemStack @NotNull [] contents;
 
         private Items(@Nullable ItemStack @NotNull [] contents) {
-
             this.contents = Arrays.stream(contents.clone())
                     .map(i -> i == null || i.getType() == Material.AIR ? null : i)
                     .toArray(ItemStack[]::new);
@@ -127,8 +127,6 @@ public abstract class BukkitData implements Data {
         @Getter
         public static class Inventory extends BukkitData.Items implements Data.Items.Inventory {
 
-            public static final int INVENTORY_SLOT_COUNT = 41;
-
             @Range(from = 0, to = 8)
             private int heldItemSlot;
 
@@ -163,11 +161,15 @@ public abstract class BukkitData implements Data {
             }
 
             private void clearInventoryCraftingSlots(@NotNull Player player) {
-                final org.bukkit.inventory.Inventory inventory = player.getOpenInventory().getTopInventory();
-                if (inventory.getType() == InventoryType.CRAFTING) {
-                    for (int slot = 0; slot < 5; slot++) {
-                        inventory.setItem(slot, null);
+                try {
+                    final org.bukkit.inventory.Inventory inventory = player.getOpenInventory().getTopInventory();
+                    if (inventory.getType() == InventoryType.CRAFTING) {
+                        for (int slot = 0; slot < 5; slot++) {
+                            inventory.setItem(slot, null);
+                        }
                     }
+                } catch (Throwable e) {
+                    // Ignore any exceptions
                 }
             }
 
@@ -175,15 +177,18 @@ public abstract class BukkitData implements Data {
 
         public static class EnderChest extends BukkitData.Items implements Data.Items.EnderChest {
 
-            public static final int ENDER_CHEST_SLOT_COUNT = 27;
-
-            private EnderChest(@NotNull ItemStack[] contents) {
+            private EnderChest(@Nullable ItemStack @NotNull [] contents) {
                 super(contents);
             }
 
             @NotNull
-            public static BukkitData.Items.EnderChest adapt(@NotNull ItemStack[] items) {
-                return new BukkitData.Items.EnderChest(items);
+            public static BukkitData.Items.EnderChest adapt(@Nullable ItemStack @NotNull [] contents) {
+                return new BukkitData.Items.EnderChest(contents);
+            }
+
+            @NotNull
+            public static BukkitData.Items.EnderChest adapt(@NotNull Collection<ItemStack> items) {
+                return adapt(items.toArray(ItemStack[]::new));
             }
 
             @NotNull
@@ -200,7 +205,7 @@ public abstract class BukkitData implements Data {
 
         public static class ItemArray extends BukkitData.Items implements Data.Items {
 
-            private ItemArray(@NotNull ItemStack[] contents) {
+            private ItemArray(@Nullable ItemStack @NotNull [] contents) {
                 super(contents);
             }
 
@@ -210,7 +215,7 @@ public abstract class BukkitData implements Data {
             }
 
             @NotNull
-            public static ItemArray adapt(@NotNull ItemStack[] drops) {
+            public static ItemArray adapt(@Nullable ItemStack @NotNull [] drops) {
                 return new ItemArray(drops);
             }
 
@@ -341,9 +346,12 @@ public abstract class BukkitData implements Data {
             }));
         }
 
-        private void setAdvancement(@NotNull HuskSync plugin, @NotNull org.bukkit.advancement.Advancement advancement,
-                                    @NotNull Player player, @NotNull BukkitUser user,
-                                    @NotNull Collection<String> toAward, @NotNull Collection<String> toRevoke) {
+        private void setAdvancement(@NotNull HuskSync plugin,
+                                    @NotNull org.bukkit.advancement.Advancement advancement,
+                                    @NotNull Player player,
+                                    @NotNull BukkitUser user,
+                                    @NotNull Collection<String> toAward,
+                                    @NotNull Collection<String> toRevoke) {
             plugin.runSync(() -> {
                 // Track player exp level & progress
                 final int expLevel = player.getLevel();
@@ -355,7 +363,8 @@ public abstract class BukkitData implements Data {
                 toRevoke.forEach(progress::revokeCriteria);
 
                 // Set player experience and level (prevent advancement awards applying twice), reset game rule
-                if (!toAward.isEmpty() && player.getLevel() != expLevel || player.getExp() != expProgress) {
+                if (!toAward.isEmpty()
+                        && (player.getLevel() != expLevel || player.getExp() != expProgress)) {
                     player.setLevel(expLevel);
                     player.setExp(expProgress);
                 }
@@ -568,7 +577,7 @@ public abstract class BukkitData implements Data {
                     // We don't sync unmodified or disabled attributes
                     return;
                 }
-                attributes.add(adapt(instance));
+                attributes.add(adapt(instance, plugin.getMinecraftVersion()));
             });
             return new BukkitData.Attributes(attributes);
         }
@@ -587,18 +596,18 @@ public abstract class BukkitData implements Data {
         }
 
         @NotNull
-        private static Attribute adapt(@NotNull AttributeInstance instance) {
+        private static Attribute adapt(@NotNull AttributeInstance instance, @NotNull Version version) {
             return new Attribute(
                     instance.getAttribute().getKey().toString(),
                     instance.getBaseValue(),
-                    instance.getModifiers().stream().map(BukkitData.Attributes::adapt).collect(Collectors.toSet())
+                    instance.getModifiers().stream().map(m -> adapt(m, version)).collect(Collectors.toSet())
             );
         }
 
         @NotNull
-        private static Modifier adapt(@NotNull AttributeModifier modifier) {
+        private static Modifier adapt(@NotNull AttributeModifier modifier, @NotNull Version version) {
             return new Modifier(
-                    modifier.getUniqueId(),
+                    version.compareTo(Version.fromString("1.21")) >= 0 ? null : modifier.getUniqueId(),
                     modifier.getName(),
                     modifier.getAmount(),
                     modifier.getOperation().ordinal(),
@@ -639,24 +648,38 @@ public abstract class BukkitData implements Data {
         private double health;
         @SerializedName("health_scale")
         private double healthScale;
+        @SerializedName("is_health_scaled")
+        private boolean isHealthScaled;
 
         @NotNull
-        public static BukkitData.Health from(double health, double healthScale) {
-            return new BukkitData.Health(health, healthScale);
+        public static BukkitData.Health from(double health, double scale, boolean isScaled) {
+            return new BukkitData.Health(health, scale, isScaled);
         }
 
+        /**
+         * @deprecated Use {@link #from(double, double, boolean)} instead
+         */
+        @NotNull
+        @Deprecated(since = "3.5.4")
+        public static BukkitData.Health from(double health, double scale) {
+            return from(health, scale, false);
+        }
+
+        /**
+         * @deprecated Use {@link #from(double, double, boolean)} instead
+         */
         @NotNull
         @Deprecated(forRemoval = true, since = "3.5")
-        @SuppressWarnings("unused")
-        public static BukkitData.Health from(double health, double maxHealth, double healthScale) {
-            return from(health, healthScale);
+        public static BukkitData.Health from(double health, @SuppressWarnings("unused") double max, double scale) {
+            return from(health, scale, false);
         }
 
         @NotNull
         public static BukkitData.Health adapt(@NotNull Player player) {
             return from(
                     player.getHealth(),
-                    player.isHealthScaled() ? player.getHealthScale() : 0d
+                    player.getHealthScale(),
+                    player.isHealthScaled()
             );
         }
 
@@ -674,13 +697,8 @@ public abstract class BukkitData implements Data {
 
             // Set health scale
             try {
-                if (healthScale != 0d) {
-                    player.setHealthScaled(true);
-                    player.setHealthScale(healthScale);
-                } else {
-                    player.setHealthScaled(false);
-                    player.setHealthScale(player.getMaxHealth());
-                }
+                player.setHealthScale(healthScale);
+                player.setHealthScaled(isHealthScaled);
             } catch (Throwable e) {
                 plugin.log(Level.WARNING, "Error setting %s's health scale to %s".formatted(player.getName(), healthScale), e);
             }
