@@ -144,6 +144,9 @@ public class FabricHuskSync implements DedicatedServerModInitializer, HuskSync, 
         // Initial plugin setup
         this.audiences = FabricServerAudiences.of(minecraftServer);
 
+        // Check compatibility
+        checkCompatibility();
+
         // Prepare data adapter
         initialize("data adapter", (plugin) -> {
             if (getSettings().getSynchronization().isCompressData()) {
